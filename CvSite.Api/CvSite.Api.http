@@ -1,0 +1,6 @@
+@CvSite.Api_HostAddress = http://localhost:5255
+
+GET {{CvSite.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
