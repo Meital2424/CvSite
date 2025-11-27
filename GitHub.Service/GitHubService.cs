@@ -1,42 +1,42 @@
 ﻿using Octokit;
 using Microsoft.Extensions.Options;
-using Microsoft.VisualBasic;
 
 namespace GitHub.Service;
-// תפקיד: היישום הטהור של הלוגיקה העסקית.
 public class GitHubService : IGitHubService
 {
     private readonly IGitHubClient _githubClient;
-    private readonly GitHubOptions _options;
+    public string Username { get; }
 
-    // הקונסטרקטור מקבל את ה-Client ואת האפשרויות בהזרקה
-    public GitHubService(IGitHubClient githubClient, IOptions<GitHubOptions> options)
+    public GitHubService(IGitHubClient githubClient, IOptionsSnapshot<GitHubOptions> options)
     {
         _githubClient = githubClient;
-        // גישה לערכים דרך ה-Value property של IOptions
-        _options = options.Value;
+        if (string.IsNullOrEmpty(options.Value.Username))
+        {
+            throw new ArgumentNullException(nameof(options.Value.Username),
+                "GitHub Username must be provided in configuration (User Secrets).");
+        }
+        Username = options.Value.Username;
     }
 
     public async Task<IEnumerable<RepositoryData>> GetPortfolio()
     {
-        // 1. שלוף רפוזיטורים אישיים
-        var repos = await _githubClient.Repository.GetAllForCurrent();
+        var repos = await _githubClient.Repository.GetAllForCurrent().ConfigureAwait(false);
 
         var results = new List<RepositoryData>();
 
         foreach (var repo in repos)
         {
-            // 2. שלוף שפות
-            var languages = await _githubClient.Repository.GetAllLanguages(_options.Username, repo.Name);
+            var ownerName = repo.Owner.Login;
+            var repoName = repo.Name;
+
+            var languages = await _githubClient.Repository.GetAllLanguages(ownerName, repoName).ConfigureAwait(false);
             var languageNames = languages.Select(l => l.Name).ToList();
 
-            // 3. שלוף קומיט אחרון (רק 1)
             var commitRequest = new ApiOptions { PageSize = 1 };
-            var lastCommit = await _githubClient.Repository.Commit.GetAll(_options.Username, repo.Name, commitRequest);
+            var lastCommit = await _githubClient.Repository.Commit.GetAll(ownerName, repoName, commitRequest).ConfigureAwait(false);
 
-            // 4. שלוף Pull Requests (פתוחים וסגורים)
             var prRequest = new PullRequestRequest { State = ItemStateFilter.All };
-            var pullRequests = await _githubClient.PullRequest.GetAllForRepository(_options.Username, repo.Name, prRequest);
+            var pullRequests = await _githubClient.PullRequest.GetAllForRepository(ownerName, repoName, prRequest).ConfigureAwait(false); 
 
             results.Add(new RepositoryData
             {
@@ -59,10 +59,10 @@ public class GitHubService : IGitHubService
             queryBuilder.Add(repoName);
 
         if (!string.IsNullOrEmpty(language))
-            queryBuilder.Add($"language:{language}"); 
+            queryBuilder.Add($"language:{language}");
 
         if (!string.IsNullOrEmpty(username))
-            queryBuilder.Add($"user:{username}"); 
+            queryBuilder.Add($"user:{username}");
 
         var fullQuery = string.Join(" ", queryBuilder);
 
@@ -77,7 +77,7 @@ public class GitHubService : IGitHubService
             Order = SortDirection.Descending
         };
 
-        var result = await _githubClient.Search.SearchRepo(request);
+        var result = await _githubClient.Search.SearchRepo(request).ConfigureAwait(false); 
 
         return result.Items.ToList();
     }

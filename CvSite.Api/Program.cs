@@ -1,85 +1,72 @@
-using GitHub.Service;
-using Microsoft.Extensions.DependencyInjection;
+ן»¿using GitHub.Service;
 using Microsoft.Extensions.Options;
 using Octokit;
-using Swashbuckle.AspNetCore.SwaggerUI;
+using Microsoft.Extensions.Caching.Memory;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddMemoryCache();
+builder.Services.AddLogging();ֲ 
 
 builder.Services.Configure<GitHubOptions>(
     builder.Configuration.GetSection(GitHubOptions.GitHub));
 
-// 3. רישום GitHubClient (Singleton)
 builder.Services.AddSingleton<IGitHubClient>(sp =>
 {
-    var options = sp.GetRequiredService<IOptions<GitHubOptions>>().Value;
+    var token = builder.Configuration.GetValue<string>("GitHubOptions:PersonalAccessToken");
+    var username = builder.Configuration.GetValue<string>("GitHubOptions:Username");
+
+    var logger = sp.GetRequiredService<ILogger<GitHubClient>>();
+
+    if (string.IsNullOrEmpty(token))
+    {
+        logger.LogError("GitHub Access Token is MISSING or EMPTY!");
+    }
+    else
+    {
+        logger.LogInformation($"GitHub Token Loaded. Length: {token.Length}. Starting Client...");
+    }
+
     var productHeader = new ProductHeaderValue("CvSite-Portfolio-Api");
 
-    // 1. יצירת ה-Client באמצעות ProductHeaderValue בלבד
-    var client = new GitHubClient(productHeader);
-
-    // 2. הגדרת Credentials דרך המאפיין (Property), אם יש טוקן
-    if (!string.IsNullOrEmpty(options.PersonalAccessToken))
+    var client = new GitHubClient(productHeader)
     {
-        // יצירת אובייקט Credentials
-        var credentials = new Credentials(options.PersonalAccessToken);
-
-        // הגדרת Credentials ל-Client שנוצר
-        client.Credentials = credentials;
-    }
+        Credentials = new Credentials(token)
+    };
 
     return client;
 });
 
-// 4. רישום IGitHubService המקורי (טרם הוספת Cache Decorator)
-builder.Services.AddScoped<IGitHubService, GitHubService>();
+builder.Services.AddScoped<IGitHubService>(sp =>
+{
+    var githubClient = sp.GetRequiredService<IGitHubClient>();
+    var cache = sp.GetRequiredService<IMemoryCache>();
+    var optionsSnapshot = sp.GetRequiredService<IOptionsSnapshot<GitHubOptions>>();
+    var directUsername = builder.Configuration.GetValue<string>("GitHubOptions:Username");
+
+    if (string.IsNullOrEmpty(directUsername))
+    {
+        throw new InvalidOperationException("GitHub Username is missing from configuration.");
+    }
+    optionsSnapshot.Value.Username = directUsername;
+
+    var decoratedService = new GitHubService(githubClient, optionsSnapshot);
+
+    return new CachedGitHubService(decoratedService, cache, optionsSnapshot);
+});
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    //app.MapOpenApi();
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-//app.UseHttpsRedirection();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
 app.Run();
-
-//var summaries = new[]
-//{
-//    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-//};
-
-//app.MapGet("/weatherforecast", () =>
-//{
-//    var forecast =  Enumerable.Range(1, 5).Select(index =>
-//        new WeatherForecast
-//        (
-//            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-//            Random.Shared.Next(-20, 55),
-//            summaries[Random.Shared.Next(summaries.Length)]
-//        ))
-//        .ToArray();
-//    return forecast;
-//})
-//.WithName("GetWeatherForecast");
-
-//app.Run();
-
-//record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-//{
-//    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-//}
